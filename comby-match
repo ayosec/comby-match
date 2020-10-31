@@ -1,0 +1,68 @@
+#!/bin/bash
+#
+# Use comby to search code. Print resuls with pygments
+
+set -euo pipefail
+
+if [ $# -eq 0 ]
+then
+  echo "Usage: $0 <comby pattern>"
+  exit 1
+fi
+
+run-comby() {
+  docker run --rm --net=none -u "$(id -u)" -v "$PWD:$PWD:ro" -w "$PWD" \
+    comby/comby -jobs "$(nproc)" -match-only -json-lines "$@" ""
+}
+
+parse-comby-output() {
+  jq -r '
+    [
+      .uri,
+      (
+        (
+          .matches | map(
+            [
+              ( .range.start.line | tostring ),
+              ( .range.end.line | tostring )
+            ]
+            | join(" "))
+        )
+        | join("-")
+      )
+    ]
+    | join(":")
+  '
+}
+
+IS_FIRST=1
+
+run-comby "$@" | parse-comby-output | while IFS=: read -r FILE RANGES
+do
+  IFS=- read -ra RANGES <<<"$RANGES"
+
+  SED=""
+  for RANGE in "${RANGES[@]}"
+  do
+    read -r START END <<<"$RANGE"
+    if [ -n "$SED" ]
+    then
+      printf -v SED '%s%di\n' "$SED" "$START"
+    fi
+
+    printf -v SED '%s%d,%dp\n' "$SED" "$START" "$END"
+  done
+
+  if [ "$IS_FIRST" -eq 0 ]
+  then
+    echo
+  else
+    IS_FIRST=0
+  fi
+
+  echo -ne '\e[0;36m-- '
+  realpath --relative-base="$PWD" "$FILE"
+  echo -ne '\e[m'
+
+  pygmentize "$FILE" | cat -n | sed -n "$SED"
+done
