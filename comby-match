@@ -41,28 +41,45 @@ run-comby "$@" | parse-comby-output | while IFS=: read -r FILE RANGES
 do
   IFS=- read -ra RANGES <<<"$RANGES"
 
-  SED=""
+  PAT=""
+  SEPS=""
   for RANGE in "${RANGES[@]}"
   do
     read -r START END <<<"$RANGE"
-    if [ -n "$SED" ]
-    then
-      printf -v SED '%s%di\n' "$SED" "$START"
+    if [ -n "$PAT" ]; then
+      PAT+=" || "
+
+      if [ -n "$SEPS" ]; then
+        SEPS+=" || "
+      fi
+      printf -v SEPS '%sNR == %d' "$SEPS" "$START"
     fi
 
-    printf -v SED '%s%d,%dp\n' "$SED" "$START" "$END"
+    printf -v PAT '%s(NR >= %d && NR <= %d)' "$PAT" "$START" "$END"
   done
 
-  if [ "$IS_FIRST" -eq 0 ]
-  then
+  AWK="
+    $PAT {
+      printf \"\\033[0;36m%6d\\033[m\\t%s\\033[m%s\", FNR, \$0, RS
+    }
+  "
+
+  if [ -n "$SEPS" ]; then
+    AWK="
+      $SEPS { print \"\" }
+      $AWK
+    "
+  fi
+
+  if [ "$IS_FIRST" -eq 0 ]; then
     echo
   else
     IS_FIRST=0
   fi
 
-  echo -ne '\e[0;36m-- '
+  echo -ne '\e[0;35m-- '
   realpath --relative-base="$PWD" "$FILE"
   echo -ne '\e[m'
 
-  pygmentize "$FILE" | cat -n | sed -n "$SED"
+  ${COMBY_HIGHLIGHT:-pygmentize} "$FILE" | awk "$AWK"
 done
